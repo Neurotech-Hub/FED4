@@ -18,7 +18,6 @@ void setup() {
   while (!Serial) delay(10);
 
   Serial.println("=== Dual I2C Scanner for ESP32 ===");
-  Serial.println("Fixing timeout issues...");
 
   // Configure power pin for I2C_2
   pinMode(LDO2, OUTPUT);

@@ -14,7 +14,7 @@ Adafruit_MCP23X17 mcp;
 #define SerialPort Serial
 #define XSHUT 1
 
-VL53L4CD sensor_vl53l4cd_sat(&DEV_I2C, A1);
+VL53L4CD sensor_vl53l4cd_sat(&DEV_I2C, -1);
 
 void setup()
 {
