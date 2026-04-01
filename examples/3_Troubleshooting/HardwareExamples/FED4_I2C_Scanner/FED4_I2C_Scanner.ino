@@ -1,4 +1,5 @@
 #include <Wire.h>
+#include <Adafruit_MCP23X17.h>
 
 // I2C Channel 1
 #define SDA_PIN_1 8
@@ -8,6 +9,9 @@
 #define SDA_PIN_2 20
 #define SCL_PIN_2 19
 #define LDO2 47
+#define XSHUT 1
+
+Adafruit_MCP23X17 mcp;
 
 // Create two separate I2C instances
 TwoWire I2C_1 = TwoWire(0);
@@ -15,6 +19,14 @@ TwoWire I2C_2 = TwoWire(1);
 
 void setup() {
   Serial.begin(115200);
+  pinMode(47, OUTPUT);
+  digitalWrite(47, HIGH);
+    if (!mcp.begin_I2C()) {
+        Serial.println("Error initializing MCP23017.");
+        while (1);
+    }
+    mcp.pinMode(XSHUT, OUTPUT);
+    mcp.digitalWrite(XSHUT, HIGH); // XSHUT must be pulled high for the sensor to be found
   while (!Serial) delay(10);
 
   Serial.println("=== Dual I2C Scanner for ESP32 ===");
