@@ -4,8 +4,8 @@ bool FED4::initializeMotion()
 {
     // Check if motion sensor should be used
     if (!useMotionSensor) {
-        Serial.println("Motion sensor (STHS34PF80) disabled by flag");
         motionSensorInitialized = false;
+        motionPercentage = NAN;
         return true; // Return true to indicate "successful" initialization (skipped)
     }
     
@@ -17,7 +17,6 @@ bool FED4::initializeMotion()
     byte error = I2C_2.endTransmission();
     
     if (error != 0) {
-        Serial.print("Motion Sensor I2C FAILED");
         return false;
     }
     

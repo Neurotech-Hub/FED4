@@ -66,7 +66,7 @@ void FED4::jammed(){
     //LDO2_OFF();  // For now leave this On until we get new boards
 
     enableAmp(false); 
-
+    syncHublink(); // Sync with Hublink before sleep
     // put FED4 to sleep with timer wakeup for sensor polling
     esp_sleep_enable_timer_wakeup(10 * 1000000); // Wake up every 10 seconds (in microseconds)
     esp_light_sleep_start();
@@ -87,31 +87,4 @@ void FED4::jammed(){
     checkButton2(); //check this button for resetting the device
     delay(100);
   }
-}
-
-void FED4::hapticBuzz(uint8_t duration)
-{
-    mcp.digitalWrite(EXP_HAPTIC, HIGH);
-    delay(duration);
-    mcp.digitalWrite(EXP_HAPTIC, LOW);
-}
-
-void FED4::hapticDoubleBuzz(uint8_t duration)
-{
-    for (int i = 0; i < 2; i++){
-    mcp.digitalWrite(EXP_HAPTIC, HIGH);
-    delay(duration);
-    mcp.digitalWrite(EXP_HAPTIC, LOW);
-    delay(duration);
-    }
-}
-
-void FED4::hapticTripleBuzz(uint8_t duration)
-{
-    for (int i = 0; i < 3; i++){
-    mcp.digitalWrite(EXP_HAPTIC, HIGH);
-    delay(duration);
-    mcp.digitalWrite(EXP_HAPTIC, LOW);
-    delay(duration);
-    }
 }

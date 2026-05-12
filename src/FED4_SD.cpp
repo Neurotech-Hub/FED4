@@ -14,17 +14,85 @@
  */
 bool FED4::initializeSD()
 {
+    // Ensure display CS is deselected first (display uses LOW when inactive)
+    pinMode(DISPLAY_CS, OUTPUT);
+    digitalWrite(DISPLAY_CS, LOW);
+    
+    // Ensure SD CS is high (inactive)
     pinMode(SD_CS, OUTPUT);
-    digitalWrite(SD_CS, HIGH); // SD inactive = HIGH
-    SPI.setBitOrder(MSBFIRST);
+    digitalWrite(SD_CS, HIGH);
+    
+    // Small delay to allow SPI bus to stabilize after display operations
+    delay(20);
 
-    // Initialize SD card
-    if (SD.begin(SD_CS, SPI, 4000000))
+    // Some cards (especially on cold boot) are sensitive to SPI state and clock speed.
+    // We start slow, fully reset SPI between attempts, then ramp up.
+    static const uint32_t kInitSpeedsHz[] = {
+        400000,   // conservative first attempt
+        1000000,  // moderate retry
+        4000000   // normal speed
+    };
+    const int maxRetries = (int)(sizeof(kInitSpeedsHz) / sizeof(kInitSpeedsHz[0]));
+
+    for (int attempt = 0; attempt < maxRetries; attempt++)
     {
-        createMetaJson(); // Ensure meta.json exists
-        return true;
+        // Ensure CS pins are in correct state before each attempt
+        digitalWrite(DISPLAY_CS, LOW); // Display deselected (inactive)
+        digitalWrite(SD_CS, HIGH);     // SD deselected (inactive)
+        delay(2);
+
+        // Cold-boot stabilization time (helps cards that need power/oscillator settle)
+        if (attempt == 0)
+        {
+            delay(250);
+        }
+
+        // Fully reset SPI between attempts so SD starts from a clean bus state
+        SPI.end();
+        delay(10);
+        SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+
+        // Ensure SPI is in the correct state for SD card
+        // Reset bit order to MSBFIRST (display uses LSBFIRST)
+        SPI.setBitOrder(MSBFIRST);
+        SPI.setDataMode(SPI_MODE0);
+
+        const uint32_t speedHz = kInitSpeedsHz[attempt];
+        Serial.printf("SD init attempt %d/%d @ %lu Hz...\n", attempt + 1, maxRetries, (unsigned long)speedHz);
+
+        if (SD.begin(SD_CS, SPI, speedHz))
+        {
+            delay(5);
+
+            const uint8_t cardType = SD.cardType();
+            if (cardType == CARD_NONE)
+            {
+                Serial.printf("SD.begin ok but cardType=CARD_NONE (attempt %d)\n", attempt + 1);
+                SD.end();
+            }
+            else if (SD.exists("/"))
+            {
+                createMetaJson(); // Ensure meta.json exists
+                Serial.printf("SD card initialized successfully on attempt %d\n", attempt + 1);
+                return true;
+            }
+            else
+            {
+                Serial.printf("SD card initialized but root directory not accessible (attempt %d)\n", attempt + 1);
+                SD.end();
+            }
+        }
+        else
+        {
+            Serial.printf("SD card initialization attempt %d failed\n", attempt + 1);
+        }
+
+        // Cooldown before retry
+        SD.end();
+        delay(150);
     }
-    Serial.println("SD card initialization failed");
+
+    Serial.println("SD card initialization failed after all retries");
     return false;
 }
 
@@ -113,26 +181,70 @@ bool FED4::createLogFile()
     }
     snprintf(idStr, sizeof(idStr), "%04d", mouseIdValue);
     char baseFilename[50];
-    int fileNumber = 0;
+    int fileNumber = -1; // Use -1 to indicate "not found yet"
+    int incompleteFileNumber = -1; // Track any incomplete file we find
+    
+    // Helper to display filename - we'll call this as soon as we know the file number
+    // This shows the filename during file creation, making it visible longer
 
     // Just change bit order for SD operations before file operations
     SPI.setBitOrder(MSBFIRST);
     digitalWrite(SD_CS, LOW);
 
-    do
-    {
+    // First, scan backwards from 99 to find the highest existing file number
+    // This is much faster when there are many files - we find the end quickly
+    int highestExisting = -1;
+    for (int i = 99; i >= 0; i--) {
         snprintf(baseFilename, sizeof(baseFilename), "/FED4_%s_%04d%02d%02d_%02d.CSV",
-                 idStr, now.year(), now.month(), now.day(), fileNumber);
+                 idStr, now.year(), now.month(), now.day(), i);
+        
+        if (SD.exists(baseFilename)) {
+            highestExisting = i;
+            break; // Found the highest existing file
+        }
+    }
+
+    // Now search forward from highestExisting+1 (or 0 if none found) for a free slot
+    // Also check files for incomplete ones we can reuse
+    int searchStart = (highestExisting >= 0) ? highestExisting + 1 : 0;
+    int searchEnd = 100;
+    
+    // Check for incomplete files while searching
+    for (int i = searchStart; i < searchEnd; i++) {
+        snprintf(baseFilename, sizeof(baseFilename), "/FED4_%s_%04d%02d%02d_%02d.CSV",
+                 idStr, now.year(), now.month(), now.day(), i);
         
         // Check if file exists
         if (!SD.exists(baseFilename)) {
-            break;
+            fileNumber = i; // Found a free slot
+            // Display filename immediately so it shows during file creation
+            char displayBuffer[15];
+            int yearLast2 = now.year() % 100;
+            snprintf(displayBuffer, sizeof(displayBuffer), "%02d%02d%02d_%02d.csv",
+                     now.month(), now.day(), yearLast2, fileNumber);
+            displayInitStatus(displayBuffer);
+            break; // Prefer free slot, stop searching
         }
         
-        // File exists, count the lines
+        // File exists, check if it's small enough to be incomplete
         File dataFile = SD.open(baseFilename, FILE_READ);
         if (!dataFile) {
-            fileNumber++;
+            continue;
+        }
+        
+        // Get file size first - much faster than reading entire file
+        size_t fileSize = dataFile.size();
+        dataFile.close();
+        
+        // If file is larger than ~1000 bytes, it definitely has more than 5 lines, skip it
+        // (CSV header + 5 data lines would be ~400-600 bytes typically)
+        if (fileSize > 1000) {
+            continue;
+        }
+        
+        // File is small, check line count to see if it's incomplete
+        dataFile = SD.open(baseFilename, FILE_READ);
+        if (!dataFile) {
             continue;
         }
         
@@ -145,32 +257,67 @@ bool FED4::createLogFile()
         dataFile.close();
                 
         if (lineCount <= 5) {
-            // File has 5 or fewer lines, delete and reuse this filename
-            if (SD.remove(baseFilename)) {
-                Serial.print("Removed incomplete file: ");
-                Serial.println(baseFilename);
-                // Verify it's actually gone
-                if (!SD.exists(baseFilename)) {
-                    break;
-                }
-                Serial.println("Warning: File still exists after remove");
-            } else {
-                Serial.print("Failed to remove file: ");
-                Serial.println(baseFilename);
+            // Found an incomplete file - remember it but keep searching for a free slot
+            if (incompleteFileNumber < 0) {
+                incompleteFileNumber = i;
             }
-            // If removal failed, try next file number
-            fileNumber++;
-            continue;
         }
+    }
+    
+    // Use incomplete file if we didn't find a free slot
+    if (fileNumber < 0 && incompleteFileNumber >= 0) {
+        fileNumber = incompleteFileNumber;
+        snprintf(baseFilename, sizeof(baseFilename), "/FED4_%s_%04d%02d%02d_%02d.CSV",
+                 idStr, now.year(), now.month(), now.day(), fileNumber);
         
-        fileNumber++;
-    } while (fileNumber < 100);
+        // Display filename immediately so it shows during file operations
+        char displayBuffer[15];
+        int yearLast2 = now.year() % 100;
+        snprintf(displayBuffer, sizeof(displayBuffer), "%02d%02d%02d_%02d.csv",
+                 now.month(), now.day(), yearLast2, fileNumber);
+        displayInitStatus(displayBuffer);
+        
+        // Delete the incomplete file
+        if (SD.remove(baseFilename)) {
+            Serial.print("Removed incomplete file: ");
+            Serial.println(baseFilename);
+            // Verify it's actually gone
+            if (!SD.exists(baseFilename)) {
+                // File removed successfully, will create new one below
+            } else {
+                Serial.println("Warning: File still exists after remove");
+                // Still try to use it
+            }
+        } else {
+            Serial.print("Failed to remove incomplete file: ");
+            Serial.println(baseFilename);
+            // Still try to use it
+        }
+    }
+    
+    // Fallback: if no file found and no incomplete file, start from 0
+    if (fileNumber < 0) {
+        fileNumber = 0;
+        snprintf(baseFilename, sizeof(baseFilename), "/FED4_%s_%04d%02d%02d_%02d.CSV",
+                 idStr, now.year(), now.month(), now.day(), fileNumber);
+        // Display filename for fallback case too
+        char displayBuffer[15];
+        int yearLast2 = now.year() % 100;
+        snprintf(displayBuffer, sizeof(displayBuffer), "%02d%02d%02d_%02d.csv",
+                 now.month(), now.day(), yearLast2, fileNumber);
+        displayInitStatus(displayBuffer);
+    }
 
     digitalWrite(SD_CS, HIGH); // Deselect after file checks
 
     // Copy final filename to class member - ensure null termination
     strncpy(filename, baseFilename, sizeof(filename) - 1);
     filename[sizeof(filename) - 1] = '\0';
+
+    // Filename is already displayed above (during file search), so it shows longer
+    // Only print to serial for debugging
+    Serial.print("Generated filename: ");
+    Serial.println(filename);
 
     // Just change bit order for SD operations
     SPI.setBitOrder(MSBFIRST);
@@ -203,7 +350,7 @@ bool FED4::createLogFile()
 
     // Write CSV headers
     dataFile.print("DateTime,ElapsedSeconds,ESP32_UID,MouseID,Sex,Strain,LibraryVer,Program,FR,");
-    dataFile.print("Event,PelletCount,LeftCount,RightCount,CenterCount,BlockPelletCount,BlockPokeCount,RetrievalTime,DispenseError,MotorTurns,Motion,");
+    dataFile.print("Event,PelletCount,LeftCount,RightCount,CenterCount,BlockPelletCount,BlockPokeCount,RetrievalTime,PokeDuration,DispenseError,MotorTurns,Motion,");
     dataFile.println("Temperature,Humidity,Pressure,GasResistance,Lux,White,FreeHeap,HeapSize,MinFreeHeap,WakeCount,BatteryVoltage,BatteryPercent");
     
     dataFile.flush();  // Force write to SD card
@@ -247,7 +394,7 @@ bool FED4::createLogFile()
     }
     
     // Give SD card time to complete write operations
-    delay(100);
+    delay(10);
 
     Serial.print("New file created: ");
     Serial.println(filename);
@@ -411,6 +558,8 @@ bool FED4::logData(const String &newEvent)
             dataFile.printf("%.3f", retrievalTime); // Use printf instead of String conversion
         }
         dataFile.write(',');
+        dataFile.printf("%.3f", pokeDuration); // PokeDuration
+        dataFile.write(',');
         dataFile.write(dispenseError ? '1' : '0'); // Write single character
         dataFile.write(',');
         dataFile.print(int(motorTurns/25)); // MotorTurns
@@ -418,13 +567,17 @@ bool FED4::logData(const String &newEvent)
         motorTurns = 0; // Reset after logging
     }
     else {
-        dataFile.print(",,,"); // RetrievalTime, DispenseError
+        dataFile.print(",,,,"); // RetrievalTime, PokeDuration, DispenseError, MotorTurns
     }
 
     // Write counters and status
     if (event == "Status" || event == "Startup" || event == "Activity") {
-        // Write Activity% (motionPercentage) with 1 decimal place
-        dataFile.printf("%.1f,", motionPercentage);
+        // Write Activity% (motionPercentage) with 1 decimal place, or "DISABLED" if motion sensor is disabled
+        if (!useMotionSensor || isnan(motionPercentage)) {
+            dataFile.print("Disabled,");
+        } else {
+            dataFile.printf("%.1f,", motionPercentage);
+        }
 
         // Write environmental data
         dataFile.printf("%.1f,%.1f,%.1f,%.1f,%.3f,%.3f,",
@@ -458,14 +611,12 @@ bool FED4::logData(const String &newEvent)
         dataFile.clearWriteError();
         dataFile.close();
         digitalWrite(SD_CS, HIGH);
-        SPI.endTransaction();
         noPix();
         return false;
     }
     
     dataFile.close();
     digitalWrite(SD_CS, HIGH);
-    SPI.endTransaction();
     noPix();
     
     // update screen counters when logging except at startup and not in ActivityMonitor
@@ -512,7 +663,6 @@ String FED4::getMetaValue(const char *rootKey, const char *subKey)
     metaFile.close();
 
     digitalWrite(SD_CS, HIGH); // Deselect after operations
-    SPI.endTransaction();
 
     if (error)
     {

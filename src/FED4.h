@@ -66,7 +66,7 @@ static const uint8_t NUMPIXELS = 1;
 static const uint16_t MOTOR_STEPS = 512;
 static const uint8_t MOTOR_SPEED = 24;
 
-static const float TOUCH_THRESHOLD = 0.1; // percentage of baseline change to trigger poke - note that when plugged in by USB this can be much more sensitive than on battery power, due to different grounding
+static const float TOUCH_THRESHOLD = 0.2; // percentage of baseline change to trigger poke - note that when plugged in by USB this can be much more sensitive than on battery power, due to different grounding
 static const char *META_FILE = "/meta.json";
 
 static const char *PREFS_NAMESPACE = "fed4";
@@ -166,13 +166,14 @@ public:
     void timeout(uint16_t min, uint16_t max);
 
     // Haptic motor vibration stimuli
-    void hapticBuzz(uint8_t duration = 200);
-    void hapticDoubleBuzz(uint8_t duration = 200);
-    void hapticTripleBuzz(uint8_t duration = 200);
+    void hapticBuzz(uint8_t duration = 100);
+    void hapticDoubleBuzz(uint8_t duration = 25);
+    void hapticTripleBuzz(uint8_t duration = 5);
+    void hapticRumble(uint16_t duration_ms = 300);
 
-    // Touch sensor management (defined in FED4_Sensors.cpp)
+    // Touch sensor management (defined in FED4_Touch.cpp)
     bool initializeTouch();
-    void calibrateTouchSensors();
+    void calibrateTouchSensors(bool checkStability = false);
     void interpretTouch();
     static void IRAM_ATTR onTouchWakeUp();
     void resetTouchFlags(); // Reset all touch flags to false
@@ -188,6 +189,8 @@ public:
     void stripTheaterChase(const char *colorName, unsigned long wait, unsigned int groupSize = 3, unsigned int numChases = 10);
     void stripTheaterChase(uint32_t color, unsigned long wait, unsigned int groupSize = 3, unsigned int numChases = 10);
     void stripRainbow(unsigned long wait, unsigned int numLoops);
+    void randomMotion(float motionStrength, uint32_t color, unsigned long frameDelay = 75, unsigned long durationMs = 3000);
+    void randomMotion(float motionStrength, const char *colorName = "blue", unsigned long frameDelay = 75, unsigned long durationMs = 3000);
     void lightsOff();
     void setStripPixel(uint8_t pixel, uint32_t color);
     void leftLight(uint32_t color);
@@ -236,6 +239,7 @@ public:
     void displaySDCardStatus();
     void displayIndicators();
     void startupAnimation();
+    void displayInitStatus(const char* message);
     void displayLowBatteryWarning();
     void displayActivityMonitor();
     void displayActivityCounters();
@@ -303,6 +307,7 @@ public:
     DateTime now();
     void adjustRTC(uint32_t timestamp);
     void updateTime();
+    bool forceRTCUpdate = false; // Set to true to force RTC update on next initialization
 
     // Vitals functions (defined in FED4_Vitals.cpp)
     float getBatteryVoltage();
@@ -357,6 +362,13 @@ public:
     void soundSweep(uint32_t startFreq = 500, uint32_t endFreq = 1500, uint32_t duration_ms = 1000);
     void noise(uint32_t duration_ms = 500, float amplitude = 1);
 
+    // "Super Mario"-style sound effects (tone synthesis)
+    void marioCoin();
+    void marioJump();
+    void marioPipe();
+    void marioFireball();
+    void marioMushroom();
+
     void setEvent(const String &newEvent)
     {
         event = newEvent;
@@ -372,6 +384,7 @@ public:
     int photogate1State;
     String event = "";
     float retrievalTime;
+    float pokeDuration = 0.0;
     int touchPadLeftBaseline;
     int touchPadCenterBaseline;
     int touchPadRightBaseline;
@@ -478,7 +491,7 @@ private:
     friend class FED4_Motor;
     friend class FED4_RTC;
     friend class FED4_SD;
-    friend class FED4_Sensors;
+    friend class FED4_Touch;
     friend class FED4_Vitals;
     friend class FED4_Feed;
     friend class FED4_Begin;

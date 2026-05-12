@@ -32,7 +32,7 @@ void FED4::updateDisplay() {
     displayMouseId();
 
     // draw line to split on screen text 
-    drawLine(0,59,168,59, DISPLAY_BLACK);  
+    //drawLine(0,59,168,59, DISPLAY_BLACK);  
     drawLine(0,60,168,60, DISPLAY_BLACK);  
 
     // draw screen elements
@@ -161,12 +161,12 @@ void FED4::displayMouseId() {
   
   if (!sdCardAvailable) {
     // Show SD card error instead of MouseID
-    setCursor(6, 53);
-    fillRect(6, 40, 120, 16, DISPLAY_WHITE); // Clear area for mouse ID and label
+    setCursor(6, 54);
+    fillRect(6, 41, 120, 16, DISPLAY_WHITE); // Clear area for mouse ID and label
     print("SD Card error!");
   } else {
     // Show normal MouseID
-    setCursor(6, 53);
+    setCursor(6, 54);
     print("MouseID: ");
     char idStr[6];  
     int mouseIdNum = mouseId.toInt();
@@ -176,7 +176,7 @@ void FED4::displayMouseId() {
     } else {
       snprintf(idStr, sizeof(idStr), "%04d", mouseIdNum % 10000);
     }
-    fillRect(82, 40, 80, 16, DISPLAY_WHITE); // Clear area for mouse ID
+    fillRect(82, 41, 80, 16, DISPLAY_WHITE); // Clear area for mouse ID
     print(idStr);
   }
 }
@@ -241,7 +241,7 @@ void FED4::displayBattery(){
   
   fillRect (99, 3, 2, 6, DISPLAY_WHITE);   //terminal
 
-  fillRect (82, 2, (int)((cellPercent)/7), 8, DISPLAY_WHITE);  //fill
+  fillRect (82, 2, (int)((cellVoltage)/7), 8, DISPLAY_WHITE);  //fill
 
   //battery text
   setFont(&Org_01);
@@ -249,8 +249,8 @@ void FED4::displayBattery(){
   setTextColor(DISPLAY_WHITE);
   
   setCursor(105, 9);
-  print((int)cellPercent);
-  print("%");
+  print(cellVoltage, 1);
+  print("V");
 }
 
 void FED4::displaySDCardStatus() {
@@ -552,7 +552,9 @@ void FED4::startupAnimation(){
   int textY = 60;        // Vertical height of the text
 
   while (textX > centerX) {
-    clearDisplay();
+    // Clear only the buffer (not hardware) to prevent flickering
+    // Avoid clearDisplay() which sends hardware commands - just clear buffer directly
+    memset(displayBuffer, 0xff, (DISPLAY_WIDTH * DISPLAY_HEIGHT) / 8);
 
     //draw FED4
     fillRect(100, 92, 32, 20, DISPLAY_BLACK);    //FED4
@@ -602,11 +604,28 @@ void FED4::startupAnimation(){
   print(text);
   refresh();
   setTextSize(1);
-  delay(1500); // Pause to keep "FED4" displayed for 1.5s
 }
 
 void FED4::displayAudio() {
   setCursor(6, 125);
   print("Audio: ");
   print(audioSilenced ? "Off" : "On");
+}
+
+// Display initialization status message below startup animation
+void FED4::displayInitStatus(const char* message) {
+  setFont(&FreeSans9pt7b);
+  setTextSize(1);
+  setTextColor(DISPLAY_BLACK);
+  
+  // Clear area for status message (below FED4 logo, around y=100-130)
+  fillRect(0, 125, 144, 100, DISPLAY_WHITE);
+  
+  // Display the initialization message
+  setCursor(6, 135);
+  print("Initializing: ");
+  setCursor(6, 158);
+  print(message);
+  
+  refresh();
 }
