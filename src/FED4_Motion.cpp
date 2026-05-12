@@ -12,16 +12,25 @@ bool FED4::initializeMotion()
     // Reset flag at start of initialization
     motionSensorInitialized = false;
     
-    // Test I2C connectivity 
+    // Test I2C connectivity
+#if FED4_BOARD_VERSION == 163
+    Wire.beginTransmission(0x5A); // STHS34PF80 default address
+    byte error = Wire.endTransmission();
+#else
     I2C_2.beginTransmission(0x5A); // STHS34PF80 default address
     byte error = I2C_2.endTransmission();
+#endif
     
     if (error != 0) {
         return false;
     }
     
     // Initialize with Adafruit library
+#if FED4_BOARD_VERSION == 163
+    if (!motionSensor.begin(0x5A, &Wire)) {
+#else
     if (!motionSensor.begin(0x5A, &I2C_2)) {
+#endif
         return false;
     }
     

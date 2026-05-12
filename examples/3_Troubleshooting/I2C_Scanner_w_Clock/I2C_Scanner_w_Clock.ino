@@ -5,6 +5,8 @@ Adafruit_MCP23X17 mcp;
 
 #define SDA_PIN_1        8
 #define SCL_PIN_1        9
+#define SDA_PIN_2        20
+#define SCL_PIN_2        19
 #define XSHUT            1
 #define SCAN_INTERVAL_MS 3000
 
@@ -16,19 +18,30 @@ const uint8_t  NUM_SPEEDS     = 4;
 uint32_t scanCount  = 0;
 uint32_t g_halfUs   = 5; // half-period in µs (default 100 kHz)
 
+// Active bus for bit-bang (set before each scan section)
+static uint8_t bb_sda_pin = SDA_PIN_1;
+static uint8_t bb_scl_pin = SCL_PIN_1;
+
 // ── Bit-Bang I2C Primitives (open-drain style) ────────────────────
 // Open-drain: driving LOW = pull pin to GND (OUTPUT LOW)
 //             releasing = let pull-up do the work (INPUT)
-inline void sda_high() { pinMode(SDA_PIN_1, INPUT);               }
-inline void sda_low()  { pinMode(SDA_PIN_1, OUTPUT); digitalWrite(SDA_PIN_1, LOW); }
-inline void scl_high() { pinMode(SCL_PIN_1, INPUT);               }
-inline void scl_low()  { pinMode(SCL_PIN_1, OUTPUT); digitalWrite(SCL_PIN_1, LOW); }
-inline bool sda_read() { pinMode(SDA_PIN_1, INPUT); return digitalRead(SDA_PIN_1); }
+inline void sda_high() { pinMode(bb_sda_pin, INPUT);               }
+inline void sda_low()  { pinMode(bb_sda_pin, OUTPUT); digitalWrite(bb_sda_pin, LOW); }
+inline void scl_high() { pinMode(bb_scl_pin, INPUT);               }
+inline void scl_low()  { pinMode(bb_scl_pin, OUTPUT); digitalWrite(bb_scl_pin, LOW); }
+inline bool sda_read() { pinMode(bb_sda_pin, INPUT); return digitalRead(bb_sda_pin); }
 inline void bb_dly()   { delayMicroseconds(g_halfUs);             }
 
 void bb_setFreq(uint32_t hz) {
   // half-period µs = 500000 / hz  (min 1µs → ~500 kHz ceiling)
   g_halfUs = max(1UL, 500000UL / (unsigned long)hz);
+}
+
+void bb_setPins(uint8_t sda, uint8_t scl) {
+  bb_sda_pin = sda;
+  bb_scl_pin = scl;
+  pinMode(bb_sda_pin, INPUT);
+  pinMode(bb_scl_pin, INPUT);
 }
 
 void bb_start() {
@@ -85,15 +98,15 @@ void identifyDevice(byte address) {
   }
 }
 
-// ── Full Multi-Speed Scan via Bit-Bang ────────────────────────────
-void runScan() {
-  scanCount++;
+// ── Full Multi-Speed Scan via Bit-Bang (one I2C bus) ─────────────
+void runScanForBus(const char* busLabel, uint8_t sdaPin, uint8_t sclPin) {
+  bb_setPins(sdaPin, sclPin);
   bool responded[128] = { false };
 
-  Serial.println(F("============================================"));
-  Serial.print(F("  SCAN #")); Serial.println(scanCount);
-  Serial.println(F("  [bit-bang I2C — guaranteed clock control]"));
-  Serial.println(F("============================================"));
+  Serial.println(F("--------------------------------------------"));
+  Serial.print(F("  Bus: ")); Serial.println(busLabel);
+  Serial.print(F("  SDA: pin ")); Serial.print(sdaPin);
+  Serial.print(F("  |  SCL: pin ")); Serial.println(sclPin);
 
   for (uint8_t s = 0; s < NUM_SPEEDS; s++) {
     bb_setFreq(CLOCK_SPEEDS[s]);
@@ -122,9 +135,8 @@ void runScan() {
     delay(50);
   }
 
-  // ── Per-Cycle Summary ──────────────────────────────────────────
-  Serial.println(F("============================================"));
-  Serial.print(F("  Summary (Scan #")); Serial.print(scanCount); Serial.println(F(")"));
+  Serial.println(F("--------------------------------------------"));
+  Serial.print(F("  Summary — ")); Serial.println(busLabel);
   uint8_t total = 0;
   for (byte addr = 1; addr < 127; addr++) {
     if (responded[addr]) {
@@ -136,8 +148,29 @@ void runScan() {
       total++;
     }
   }
-  if (total == 0) Serial.println(F("  No devices found this cycle!"));
+  if (total == 0) {
+    Serial.print(F("  No devices on ")); Serial.println(busLabel);
+  }
+}
+
+void runScan() {
+  scanCount++;
+
+  Serial.println(F("============================================"));
+  Serial.print(F("  SCAN #")); Serial.println(scanCount);
+  Serial.println(F("  [bit-bang I2C — guaranteed clock control]"));
+  Serial.println(F("  I2C_1: SDA=8 SCL=9  |  I2C_2: SDA=20 SCL=19"));
+  Serial.println(F("============================================"));
+
+  runScanForBus("I2C_1 (pins 8, 9)", SDA_PIN_1, SCL_PIN_1);
+  runScanForBus("I2C_2 (pins 20, 19)", SDA_PIN_2, SCL_PIN_2);
+
+  Serial.println(F("============================================"));
+  Serial.print(F("  End scan #")); Serial.println(scanCount);
   Serial.println(F("============================================\n"));
+
+  // Restore bus 1 pins after scanning bus 2 (matches Wire / MCP wiring)
+  bb_setPins(SDA_PIN_1, SCL_PIN_1);
 }
 
 // ── Setup ─────────────────────────────────────────────────────────
@@ -162,10 +195,13 @@ void setup() {
   pinMode(SDA_PIN_1, INPUT);
   pinMode(SCL_PIN_1, INPUT);
 
+  pinMode(SDA_PIN_2, INPUT);
+  pinMode(SCL_PIN_2, INPUT);
+
   Serial.println(F("============================================"));
   Serial.println(F("  I2C Multi-Speed Scanner  [ESP32 bit-bang] "));
-  Serial.print  (F("  SDA: pin ")); Serial.print(SDA_PIN_1);
-  Serial.print  (F("  |  SCL: pin ")); Serial.println(SCL_PIN_1);
+  Serial.println(F("  I2C_1: SDA=8  SCL=9   (MCP / Wire + bit-bang)"));
+  Serial.println(F("  I2C_2: SDA=20 SCL=19  (bit-bang only)"));
   Serial.println(F("============================================\n"));
 }
 

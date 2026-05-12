@@ -47,9 +47,26 @@
 // Pin Definitions
 #include "FED4_Pins.h"
 
+// Board Version: set to 162 for v1.6.2 or 163 for v1.6.3
+#ifndef FED4_BOARD_VERSION
+  #define FED4_BOARD_VERSION 163
+#endif
+
+#if FED4_BOARD_VERSION == 163
+  #define FED4_BOARD_VERSION_STR "1.6.3"
+#elif FED4_BOARD_VERSION == 162
+  #define FED4_BOARD_VERSION_STR "1.6.2"
+#else
+  #error "Unsupported FED4_BOARD_VERSION. Use 162 (v1.6.2) or 163 (v1.6.3)."
+#endif
+
 // Device Constants
 static const uint8_t LIS3DH_I2C_ADDRESS = 0x19;   // Default I2C address for LIS3DH accelerometer
-static const uint8_t MLX90393_I2C_ADDRESS = 0x0C; // Default I2C address for MLX90393 magnetometer
+#if FED4_BOARD_VERSION == 163
+  static const uint8_t MLX90393_I2C_ADDRESS = 0x10; // MLX90393 I2C address for board v1.6.3
+#else
+  static const uint8_t MLX90393_I2C_ADDRESS = 0x0C; // MLX90393 I2C address for board v1.6.2
+#endif
 
 // Display Colors and Constants
 static const uint8_t DISPLAY_BLACK = 0;
